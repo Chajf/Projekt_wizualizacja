@@ -1,0 +1,690 @@
+---
+title: "Projekt - metody pozyskiwania i wizualizacji danych"
+author: "Patryk Marek"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,message=FALSE, warning=FALSE)
+```
+
+```{r include=FALSE}
+library(tidyverse)
+library(rvest)
+library(rio)
+library(flextable)
+library(scales)
+library(rstatix)
+library(gtsummary)
+library(gt)
+```
+
+# Temat i założenia projektu
+
+Tematem projketu jest pobranie oraz wizualizacja danych przedstawiająca rozegrae gry e-sportowe w [League of Legends](https://www.leagueoflegends.com/pl-pl/) przez wybrane drużyny z regionu europejskiego w sezonie jedenastym (2021).
+
+Przedstawione będą dane gier dla drużyn:
+
+-   MAD
+
+-   RGE
+
+-   G2
+
+-   FNC
+
+Każda tabela będzie odnosiła się do danej drużyny i zawierała następujące dane: wynik meczu, punktacja, eliminacje, złoto, wieże, smoki, przeciwnik w danym meczu, eliminacje przeciwnika, złoto przeciwnika, wieże przeciwnika, smoki przeciwnika, czas gry, etap, turniej.
+
+# MAD Lions
+
+MAD Lions to hiszpańska drużyna założona pod koniec 2019 roku, wcześniej znana jako Splyce (założona w 2015 r.). Po sezonie dziesiątym który przeznaczyli na zgranie się członków zespołu zdominowali sezon jedenasty na europejskiej scenie zajmując pierwsze miejsce w obu splitach (wiosennym i letnim). Aktulnie pula wszystkich zdobytych nagród wynosi 141,813\$ i 210,000€.
+
+```{r include=FALSE}
+url <- "https://gol.gg/teams/team-matchlist/1152/split-ALL/tournament-ALL/"
+page <- read_html(url)
+
+mad <- page %>% 
+  html_nodes(xpath="/html/body/div/main/div[2]/div/div[3]/div/div/div/table") %>% 
+  html_table()
+
+mad <- as.data.frame(mad) %>% 
+  .[,-c(3,14,15)]
+
+colnames(mad) <- c("Result","Score","Kills","Golds","Towers","Dragons","Vs","Vs_kills","Vs_golds",
+                   "Vs_towers","Vs_dragons","Duration","Week","Tournament")
+
+```
+
+```{r echo=FALSE}
+mad[1:10,] %>% 
+  flextable() %>% 
+  set_header_labels(values=list(Vs_kills="Kills",Vs_golds="Golds",Vs_towers="Towers",Vs_dragons="Dragons")) %>% 
+  set_caption(.,"Przykładowe rozgrywki") %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  add_header_row(values=c("","MAD Lions","","Oponent",""),colwidths = c(2,4,1,4,3)) %>%
+  align(i=1,align="center",part = "header") %>% 
+  vline(j=c("Score","Dragons","Vs","Vs_dragons"))
+
+```
+
+Znacznie ciekawiej prezentuje się jednak tabela ze środnią zdobywanych celów w zależnościu o wyniku spotkania.
+
+```{r echo=FALSE}
+mad_count <- mad %>% 
+  group_by(Result) %>% 
+  count()
+
+mad_avg <- mad %>% 
+  group_by(Result) %>% 
+  summarise("Avg kills"=round(mean(Kills),1),"Avg golds"=round(mean(Golds),1),
+            "Avg towers"=round(mean(Towers),1),"Avg dragons"=round(mean(Dragons),1),
+            "Avg vs kills"=round(mean(Vs_kills),1),"Avg vs golds"=round(mean(Vs_golds),1),
+            "Avg vs towers"=round(mean(Vs_towers),1),"Avg vs dragons"=round(mean(Vs_dragons),1)) %>%
+  left_join(.,mad_count,by="Result")
+
+mad_avg %>% 
+  select(Result,"Matches"=n,everything()) %>% 
+  flextable() %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  add_header_row(values=c("","MAD Lions","Oponent"),colwidths = c(2,4,4)) %>%
+  align(i=1,align="center",part = "header") %>% 
+  vline(j=c("Matches","Avg dragons")) %>% 
+  set_caption(.,"Średnie wartości") %>%
+  autofit()
+```
+
+```{r}
+mad_avg %>% 
+  transmute(Result,"Kills diff."=c(mad_avg$`Avg kills`[1]-mad_avg$`Avg vs kills`[2],mad_avg$`Avg kills`[2]-mad_avg$`Avg vs kills`[1]),
+             "Golds diff."=c(mad_avg$`Avg golds`[1]-mad_avg$`Avg vs golds`[2],mad_avg$`Avg golds`[2]-mad_avg$`Avg vs golds`[1]),
+             "Towers diff."=c(mad_avg$`Avg towers`[1]-mad_avg$`Avg vs towers`[2],mad_avg$`Avg towers`[2]-mad_avg$`Avg vs towers`[1]),
+             "Dragons diff."=c(mad_avg$`Avg dragons`[1]-mad_avg$`Avg vs dragons`[2],mad_avg$`Avg dragons`[2]-mad_avg$`Avg vs dragons`[1])) %>% 
+  flextable() %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  vline(j="Result") %>%
+  add_footer_lines("Wyliczone ze średnich wartości") %>% 
+  autofit()
+```
+
+### Wykresy
+
+```{r fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+
+mad %>% 
+  ggplot(aes(Golds,Vs_golds,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy golds")+
+  theme(legend.position = "top")
+
+mad %>% 
+  ggplot(aes(Kills,Vs_kills,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy kills")+
+  theme(legend.position = "top")
+
+mad %>% 
+  ggplot(aes(Towers,Vs_towers,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy towers")+
+  theme(legend.position = "top")
+
+mad %>% 
+  ggplot(aes(Dragons,Vs_dragons,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy dragons")+
+  theme(legend.position = "top")
+```
+
+Powyżej przedstawione są cztery wykresy rozrzutu głównych celów gry pomiędzy MAD Lions a drużyną przeciwną.
+
+```{r, fig.align='center'}
+mad %>% 
+  mutate(gold_diff=Golds-Vs_golds) %>% 
+  ggplot(aes(Kills,gold_diff,color=Result))+
+  geom_point()+
+  labs(y="Gold difference")+
+  geom_smooth(method = "lm",se=F)
+```
+
+Na powyższym wykresie zilustrowna jest zależność pomiędzy zdobytymi eliminacjami a różnicą w złocie pomiędzy drużynami. Z krzształtu krzywych regresji widać że w przypadku przewagi złota dla przeciwnika hiszpańska drużyna jest w stanie wykorzystać eliminacje w znacznie bardziej efektywny sposób.
+
+# Rogue
+
+Jest to amerykańska drużyna założona założona w 2016 roku. Oddział europejski w League of Legends uformowany został dopiero w 2018 roku żeby dołączyć do oficjalnych rozgrywek regionalnych rok później. W naszym kraju jest to drużyna dosyć popularna ze względu na to że od 2019 w składzie pojawiło się aż sześciu graczy z Polski. Aktualnie pula zdobytych nagród wynosi 89,000\$ i 142,500€.
+
+```{r include=FALSE}
+url <- "https://gol.gg/teams/team-matchlist/1154/split-ALL/tournament-ALL/"
+page <- read_html(url)
+
+rge <- page %>% 
+  html_nodes(xpath="/html/body/div/main/div[2]/div/div[3]/div/div/div/table") %>% 
+  html_table()
+
+rge <- as.data.frame(rge) %>% 
+  .[,-c(3,14,15)]
+
+colnames(rge) <- c("Result","Score","Kills","Golds","Towers","Dragons","Vs","Vs_kills","Vs_golds",
+                   "Vs_towers","Vs_dragons","Duration","Week","Tournament")
+```
+
+```{r echo=FALSE}
+rge[1:10,] %>% 
+  flextable() %>% 
+  set_header_labels(values=list(Vs_kills="Kills",Vs_golds="Golds",Vs_towers="Towers",Vs_dragons="Dragons")) %>% 
+  set_caption(.,"Przykładowe rozgrywki") %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  add_header_row(values=c("","Rouge","","Oponent",""),colwidths = c(2,4,1,4,3)) %>%
+  align(i=1,align="center",part = "header") %>% 
+  vline(j=c("Score","Dragons","Vs","Vs_dragons"))
+```
+
+```{r}
+rge_count <- rge %>% 
+  group_by(Result) %>% 
+  count()
+
+rge_avg <- rge %>% 
+  group_by(Result) %>% 
+  summarise("Avg kills"=round(mean(Kills),1),"Avg golds"=round(mean(Golds),1),
+            "Avg towers"=round(mean(Towers),1),"Avg dragons"=round(mean(Dragons),1),
+            "Avg vs kills"=round(mean(Vs_kills),1),"Avg vs golds"=round(mean(Vs_golds),1),
+            "Avg vs towers"=round(mean(Vs_towers),1),"Avg vs dragons"=round(mean(Vs_dragons),1)) %>%
+  left_join(.,rge_count,by="Result")
+
+rge_avg %>% 
+  select(Result,"Matches"=n,everything()) %>% 
+  flextable() %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  add_header_row(values=c("","Rogue","Oponent"),colwidths = c(2,4,4)) %>%
+  align(i=1,align="center",part = "header") %>% 
+  vline(j=c("Matches","Avg dragons")) %>% 
+  set_caption(.,"Średnie wartości") %>% 
+  autofit()
+```
+
+```{r}
+rge_avg %>% 
+  transmute(Result,"Kills diff."=c(rge_avg$`Avg kills`[1]-rge_avg$`Avg vs kills`[2],rge_avg$`Avg kills`[2]-rge_avg$`Avg vs kills`[1]),
+             "Golds diff."=c(rge_avg$`Avg golds`[1]-rge_avg$`Avg vs golds`[2],rge_avg$`Avg golds`[2]-rge_avg$`Avg vs golds`[1]),
+             "Towers diff."=c(rge_avg$`Avg towers`[1]-rge_avg$`Avg vs towers`[2],rge_avg$`Avg towers`[2]-rge_avg$`Avg vs towers`[1]),
+             "Dragons diff."=c(rge_avg$`Avg dragons`[1]-rge_avg$`Avg vs dragons`[2],rge_avg$`Avg dragons`[2]-rge_avg$`Avg vs dragons`[1])) %>% 
+  flextable() %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  vline(j="Result") %>%
+  add_footer_lines("Wyliczone ze średnich wartości") %>% 
+  autofit()
+```
+
+Z powyższych tabel możemy zaobserwować że RGE radzi sobie znacznie lepiej od przeciwników kiedy są postawieni w pozycji przegrywającej (różnica aż 5.4 tysiąca złota) lecz nie potrafią zbudować znaczącej przewagi podczas zwycięstw (średnio niższe wartości od przeciwników w trzech z czterech głównych celów).
+
+### Wykresy
+
+```{r fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+
+rge %>% 
+  ggplot(aes(Golds,Vs_golds,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy golds")+
+  theme(legend.position = "top")
+
+rge %>% 
+  ggplot(aes(Kills,Vs_kills,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy kills")+
+  theme(legend.position = "top")
+
+rge %>% 
+  ggplot(aes(Towers,Vs_towers,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy towers")+
+  theme(legend.position = "top")
+
+rge %>% 
+  ggplot(aes(Dragons,Vs_dragons,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy dragons")+
+  theme(legend.position = "top")
+```
+
+Powyżej przedstawione są cztery wykresy rozrzutu głównych celów gry pomiędzy Rouge a drużyną przeciwną.
+
+```{r, fig.align='center'}
+rge %>% 
+  mutate(gold_diff=Golds-Vs_golds) %>% 
+  ggplot(aes(Kills,gold_diff,color=Result))+
+  geom_point()+
+  labs(y="Gold difference")+
+  geom_smooth(method = "lm",se=F)
+```
+
+Z powyższego wykresu widać że ilość eliminacji ma podobny wpływ na wielkość różnicy w złocie w przypadku gier przegranych jak i wygranych.
+
+# G2 Esports
+
+G2 Esports to niemiecka drużyna założona w 2015 roku i aktywnie biorąca udział w rozgrywkach regionalnych od roku 2016. Aktualnie posiada status jednej z najmocniejszych dużyn w Europie, przyczyniły się do tego między innymi Mistrzostwa Świata 2019 kiedy to G2 przegrało dopiero finalny pojedynek z Chińską drużyną. Wpływ drużyny na region dostrzegli też inwestorzy, największymi partnerami G2 są: Twitch, Logitech, Adidas, BMW. Drużyna zebrała łącznie nagrody o wartości 2,026,307\$ i 590,000€
+
+```{r include=FALSE}
+url <- "https://gol.gg/teams/team-matchlist/1151/split-ALL/tournament-ALL/"
+page <- read_html(url)
+
+g2 <- page %>% 
+  html_nodes(xpath="/html/body/div/main/div[2]/div/div[3]/div/div/div/table") %>% 
+  html_table()
+
+g2 <- as.data.frame(g2) %>% 
+  .[,-c(3,14,15)]
+
+colnames(g2) <- c("Result","Score","Kills","Golds","Towers","Dragons","Vs","Vs_kills","Vs_golds",
+                   "Vs_towers","Vs_dragons","Duration","Week","Tournament")
+```
+
+```{r echo=FALSE}
+g2[1:10,] %>% 
+  flextable() %>% 
+  set_header_labels(values=list(Vs_kills="Kills",Vs_golds="Golds",Vs_towers="Towers",Vs_dragons="Dragons")) %>% 
+  set_caption(.,"Przykładowe rozgrywki") %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  add_header_row(values=c("","G2 Esports","","Oponent",""),colwidths = c(2,4,1,4,3)) %>%
+  align(i=1,align="center",part = "header") %>% 
+  vline(j=c("Score","Dragons","Vs","Vs_dragons"))
+```
+
+```{r}
+g2_count <- g2 %>% 
+  group_by(Result) %>% 
+  count()
+
+g2_avg <- g2 %>% 
+  group_by(Result) %>% 
+  summarise("Avg kills"=round(mean(Kills),1),"Avg golds"=round(mean(Golds),1),
+            "Avg towers"=round(mean(Towers),1),"Avg dragons"=round(mean(Dragons),1),
+            "Avg vs kills"=round(mean(Vs_kills),1),"Avg vs golds"=round(mean(Vs_golds),1),
+            "Avg vs towers"=round(mean(Vs_towers),1),"Avg vs dragons"=round(mean(Vs_dragons),1)) %>%
+  left_join(.,rge_count,by="Result")
+
+g2_avg %>% 
+  select(Result,"Matches"=n,everything()) %>% 
+  flextable() %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  add_header_row(values=c("","G2 Esports","Oponent"),colwidths = c(2,4,4)) %>%
+  align(i=1,align="center",part = "header") %>% 
+  vline(j=c("Matches","Avg dragons")) %>% 
+  set_caption(.,"Średnie wartości") %>%
+  autofit()
+```
+
+```{r}
+g2_avg %>% 
+  transmute(Result,"Kills diff."=c(g2_avg$`Avg kills`[1]-g2_avg$`Avg vs kills`[2],g2_avg$`Avg kills`[2]-g2_avg$`Avg vs kills`[1]),
+             "Golds diff."=c(g2_avg$`Avg golds`[1]-g2_avg$`Avg vs golds`[2],g2_avg$`Avg golds`[2]-g2_avg$`Avg vs golds`[1]),
+             "Towers diff."=c(g2_avg$`Avg towers`[1]-g2_avg$`Avg vs towers`[2],g2_avg$`Avg towers`[2]-g2_avg$`Avg vs towers`[1]),
+             "Dragons diff."=c(g2_avg$`Avg dragons`[1]-g2_avg$`Avg vs dragons`[2],g2_avg$`Avg dragons`[2]-g2_avg$`Avg vs dragons`[1])) %>% 
+  flextable() %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  vline(j="Result") %>%
+  add_footer_lines("Wyliczone ze średnich wartości") %>% 
+  autofit()
+```
+
+G2 Eposrts w porówaniu do poprzedniej drużyny prezentuje zupełnie odmienny styl prowadzenia gier, będąc na wygranej pozycji dominują przeciwników lecz kiedy przegrywają zdobywają mniej celów niż przeciwnicy.
+
+### Wykresy
+
+```{r fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+
+g2 %>% 
+  ggplot(aes(Golds,Vs_golds,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy golds")+
+  theme(legend.position = "top")
+
+g2 %>% 
+  ggplot(aes(Kills,Vs_kills,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy kills")+
+  theme(legend.position = "top")
+
+g2 %>% 
+  ggplot(aes(Towers,Vs_towers,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy towers")+
+  theme(legend.position = "top")
+
+g2 %>% 
+  ggplot(aes(Dragons,Vs_dragons,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy dragons")+
+  theme(legend.position = "top")
+```
+
+```{r, fig.align='center'}
+g2 %>% 
+  mutate(gold_diff=Golds-Vs_golds) %>% 
+  ggplot(aes(Kills,gold_diff,color=Result))+
+  geom_point()+
+  labs(y="Gold difference")+
+  geom_smooth(method = "lm",se=F)
+```
+
+# Fnatic
+
+Fnatic to drużyna założona w Anglii w roku 2011 co czyni ją jedną z najstarszych drużyn esportowych w League of Legends. W profesjonalnych rozgrywkach bierze udział już od sezonu pierwszego i jako jedyna drużna z Europy może poszczycić się zdobyciem mistrzostwa świata (Season 1 World Championship). Swoją pozycję ugruntowali także patronatem sponsorów takich jak BMW lub AMD oraz pulą nagród w wysokości USD 2,308,743, EUR 478,500, KRW 4,500,000, SEK 195,000 (Łącznie kwota ta wynosi 2,78 mln USD)
+
+```{r include=FALSE}
+url <- "https://gol.gg/teams/team-matchlist/1150/split-ALL/tournament-ALL/"
+page <- read_html(url)
+
+fnc <- page %>% 
+  html_nodes(xpath="/html/body/div/main/div[2]/div/div[3]/div/div/div/table") %>% 
+  html_table()
+
+fnc <- as.data.frame(fnc) %>% 
+  .[,-c(3,14,15)]
+
+colnames(fnc) <- c("Result","Score","Kills","Golds","Towers","Dragons","Vs","Vs_kills","Vs_golds",
+                   "Vs_towers","Vs_dragons","Duration","Week","Tournament")
+```
+
+```{r echo=FALSE}
+fnc[1:10,] %>% 
+  flextable() %>% 
+  set_header_labels(values=list(Vs_kills="Kills",Vs_golds="Golds",Vs_towers="Towers",Vs_dragons="Dragons")) %>% 
+  set_caption(.,"Przykładowe rozgrywki") %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  add_header_row(values=c("","Fnatic","","Oponent",""),colwidths = c(2,4,1,4,3)) %>%
+  align(i=1,align="center",part = "header") %>% 
+  vline(j=c("Score","Dragons","Vs","Vs_dragons"))
+```
+
+```{r}
+fnc_count <- fnc %>% 
+  group_by(Result) %>% 
+  count()
+
+fnc_avg <- fnc %>% 
+  group_by(Result) %>% 
+  summarise("Avg kills"=round(mean(Kills),1),"Avg golds"=round(mean(Golds),1),
+            "Avg towers"=round(mean(Towers),1),"Avg dragons"=round(mean(Dragons),1),
+            "Avg vs kills"=round(mean(Vs_kills),1),"Avg vs golds"=round(mean(Vs_golds),1),
+            "Avg vs towers"=round(mean(Vs_towers),1),"Avg vs dragons"=round(mean(Vs_dragons),1)) %>%
+  left_join(.,rge_count,by="Result")
+
+fnc_avg %>% 
+  select(Result,"Matches"=n,everything()) %>% 
+  flextable() %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  add_header_row(values=c("","Fnatic","Oponent"),colwidths = c(2,4,4)) %>%
+  align(i=1,align="center",part = "header") %>% 
+  vline(j=c("Matches","Avg dragons")) %>% 
+  set_caption(.,"Średnie wartości") %>%
+  autofit()
+```
+
+```{r}
+fnc_avg %>% 
+  transmute(Result,"Kills diff."=c(fnc_avg$`Avg kills`[1]-fnc_avg$`Avg vs kills`[2],fnc_avg$`Avg kills`[2]-fnc_avg$`Avg vs kills`[1]),
+             "Golds diff."=c(fnc_avg$`Avg golds`[1]-fnc_avg$`Avg vs golds`[2],fnc_avg$`Avg golds`[2]-fnc_avg$`Avg vs golds`[1]),
+             "Towers diff."=c(fnc_avg$`Avg towers`[1]-fnc_avg$`Avg vs towers`[2],fnc_avg$`Avg towers`[2]-fnc_avg$`Avg vs towers`[1]),
+             "Dragons diff."=c(fnc_avg$`Avg dragons`[1]-fnc_avg$`Avg vs dragons`[2],fnc_avg$`Avg dragons`[2]-fnc_avg$`Avg vs dragons`[1])) %>% 
+  flextable() %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN"))) %>% 
+  vline(j="Result") %>%
+  add_footer_lines("Wyliczone ze średnich wartości") %>% 
+  autofit()
+```
+
+W przypadku Fnatic możemy dostrzec podobieństwo do RGE, na pozaycji przegrywającej radzą sobie lepiej niż przeciwnicy w tej samej sytuacji, lecz wygrywając radzą sobie gorzej od oponentów. Warty odnotowania jest fakt że pomimo wyniku meczu FNC średnio zdobywa więcej smoków i wież od swoich przeciwników.
+
+### Wykresy
+
+```{r fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+
+fnc %>% 
+  ggplot(aes(Golds,Vs_golds,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy golds")+
+  theme(legend.position = "top")
+
+fnc %>% 
+  ggplot(aes(Kills,Vs_kills,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy kills")+
+  theme(legend.position = "top")
+
+fnc %>% 
+  ggplot(aes(Towers,Vs_towers,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy towers")+
+  theme(legend.position = "top")
+
+fnc %>% 
+  ggplot(aes(Dragons,Vs_dragons,color=Result))+
+  geom_point()+
+  geom_smooth(method = "lm",se=F)+
+  labs(y="Enemy dragons")+
+  theme(legend.position = "top")
+```
+
+```{r, fig.align='center'}
+fnc %>% 
+  mutate(gold_diff=Golds-Vs_golds) %>% 
+  ggplot(aes(Kills,gold_diff,color=Result))+
+  geom_point()+
+  labs(y="Gold difference")+
+  geom_smooth(method = "lm",se=F)
+```
+
+W drużynie Fnatic zależność między eliminacjami a różnicą w złocie zdaje się być najbardziej uporządkowana sposród omawianych drużyn. Zauważyć można że u jako jedynych we wszystkich przegranych meczach przegrywali w złocie a we wszystkich wygranych byli na prowadzeniu. Świadczyć to może o stabliności prowadzenia rozgrywki.
+
+# Zestawienie między drużynami
+
+Zestawienie tabelaryczne średnich wartości zdobywanych celów przez omawiane drużyny z podziałem na wynik meczu prezentuje się następująco:
+
+```{r}
+teams_avg <- rbind(mad_avg,rge_avg,g2_avg,fnc_avg) %>% 
+  .[,1:5] %>% 
+  mutate(Team=c(rep("MAD",2),rep("RGE",2),rep("G2",2),rep("FNC",2)),
+         Logo=c(rep("C:\\Users\\Patryk\\Desktop\\Studia\\Metody_pozyskiwania_danych\\MAD_Lionslogo_profile.png",2),
+                rep("C:\\Users\\Patryk\\Desktop\\Studia\\Metody_pozyskiwania_danych\\Rogue_%28European_Team%29logo_square.png",2),
+                rep("C:\\Users\\Patryk\\Desktop\\Studia\\Metody_pozyskiwania_danych\\G2_Esportslogo_square.png",2),
+                rep("C:\\Users\\Patryk\\Desktop\\Studia\\Metody_pozyskiwania_danych\\Fnaticlogo_square.png",2)))
+
+teams_avg %>% 
+  select(Team,Logo,everything()) %>% 
+  flextable() %>% 
+  merge_v(j=~Team + ~Logo) %>% 
+  colformat_image(j="Logo",width = .5,height = .5) %>% 
+  hline(i=1:8) %>% 
+  vline(j=c(1,2)) %>% 
+  color(j="Result",
+        part="body",
+        color = col_factor(palette=c("red","green"),domain=c("LOSS","WIN")))
+```
+
+Porównanie na wykresach słupkowych
+
+### Eliminacje
+
+```{r fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+
+teams_df <- teams_avg %>% 
+  .[c(1,3,5,7),-c(1,7)] %>% 
+  mutate(color_code=c("#debb5f","#00b0ff","black","#fe5900")) %>% 
+  mutate(Team = fct_reorder(Team,.$`Avg kills`),color_code=fct_reorder(color_code,.$`Avg kills`))
+
+teams_df %>% 
+  ggplot(aes(x=Team,y=.$`Avg kills`,fill=Team))+
+  geom_bar(stat = "identity",width = .4)+
+  coord_flip() +
+  labs(x="",y="",title = "Avarage kills while losing")+
+  scale_fill_manual(values = as.character(teams_df$color_code[order(teams_df$`Avg kills`)]))+
+  theme_bw()+
+  theme(legend.position = "none")
+
+teams_df <- teams_avg %>% 
+  .[-c(1,3,5,7),-c(1,7)] %>% 
+  mutate(color_code=c("#debb5f","#00b0ff","black","#fe5900")) %>% 
+  mutate(Team = fct_reorder(Team,.$`Avg kills`),color_code=fct_reorder(color_code,.$`Avg kills`))
+
+teams_df %>% 
+  ggplot(aes(x=Team,y=.$`Avg kills`,fill=Team))+
+  geom_bar(stat = "identity",width = .4)+
+  scale_fill_manual(values = as.character(teams_df$color_code[order(teams_df$`Avg kills`)]))+
+  coord_flip() +
+  labs(x="",y="",title = "Avarage kills while winning")+
+  theme_bw()+
+  theme(legend.position = "none")
+```
+
+### Złoto
+
+```{r fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+
+teams_df <- teams_avg %>% 
+  .[c(1,3,5,7),-c(1,7)] %>% 
+  mutate(color_code=c("#debb5f","#00b0ff","black","#fe5900")) %>% 
+  mutate(Team = fct_reorder(Team,.$`Avg golds`),color_code=fct_reorder(color_code,.$`Avg golds`))
+
+teams_df %>% 
+  ggplot(aes(x=Team,y=.$`Avg golds`,fill=Team))+
+  geom_bar(stat = "identity",width = .4)+
+  coord_flip() +
+  labs(x="",y="",title = "Avarage golds while losing")+
+  scale_fill_manual(values = as.character(teams_df$color_code[order(teams_df$`Avg golds`)]))+
+  theme_bw()+
+  theme(legend.position = "none")
+
+teams_df <- teams_avg %>% 
+  .[-c(1,3,5,7),-c(1,7)] %>% 
+  mutate(color_code=c("#debb5f","#00b0ff","black","#fe5900")) %>% 
+  mutate(Team = fct_reorder(Team,.$`Avg golds`),color_code=fct_reorder(color_code,.$`Avg golds`))
+
+teams_df %>% 
+  ggplot(aes(x=Team,y=.$`Avg golds`,fill=Team))+
+  geom_bar(stat = "identity",width = .4)+
+  scale_fill_manual(values = as.character(teams_df$color_code[order(teams_df$`Avg golds`)]))+
+  coord_flip() +
+  labs(x="",y="",title = "Avarage golds while winning")+
+  theme_bw()+
+  theme(legend.position = "none")
+```
+
+### Wieże
+
+```{r fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+
+teams_df <- teams_avg %>% 
+  .[c(1,3,5,7),-c(1,7)] %>% 
+  mutate(color_code=c("#debb5f","#00b0ff","black","#fe5900")) %>% 
+  mutate(Team = fct_reorder(Team,.$`Avg towers`),color_code=fct_reorder(color_code,.$`Avg towers`))
+
+teams_df %>% 
+  ggplot(aes(x=Team,y=.$`Avg towers`,fill=Team))+
+  geom_bar(stat = "identity",width = .4)+
+  coord_flip() +
+  labs(x="",y="",title = "Avarage towers while losing")+
+  scale_fill_manual(values = as.character(teams_df$color_code[order(teams_df$`Avg towers`)]))+
+  theme_bw()+
+  theme(legend.position = "none")
+
+teams_df <- teams_avg %>% 
+  .[-c(1,3,5,7),-c(1,7)] %>% 
+  mutate(color_code=c("#debb5f","#00b0ff","black","#fe5900")) %>% 
+  mutate(Team = fct_reorder(Team,.$`Avg towers`),color_code=fct_reorder(color_code,.$`Avg towers`))
+
+teams_df %>% 
+  ggplot(aes(x=Team,y=.$`Avg towers`,fill=Team))+
+  geom_bar(stat = "identity",width = .4)+
+  scale_fill_manual(values = as.character(teams_df$color_code[order(teams_df$`Avg towers`)]))+
+  coord_flip() +
+  labs(x="",y="",title = "Avarage towers while winning")+
+  theme_bw()+
+  theme(legend.position = "none")
+```
+
+### Smoki
+
+```{r fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+
+teams_df <- teams_avg %>% 
+  .[c(1,3,5,7),-c(1,7)] %>% 
+  mutate(color_code=c("#debb5f","#00b0ff","black","#fe5900")) %>% 
+  mutate(Team = fct_reorder(Team,.$`Avg dragons`),color_code=fct_reorder(color_code,.$`Avg dragons`))
+
+teams_df %>% 
+  ggplot(aes(x=Team,y=.$`Avg dragons`,fill=Team))+
+  geom_bar(stat = "identity",width = .4)+
+  coord_flip() +
+  labs(x="",y="",title = "Avarage dragons while losing")+
+  scale_fill_manual(values = as.character(teams_df$color_code[order(teams_df$`Avg dragons`)]))+
+  theme_bw()+
+  theme(legend.position = "none")
+
+teams_df <- teams_avg %>% 
+  .[-c(1,3,5,7),-c(1,7)] %>% 
+  mutate(color_code=c("#debb5f","#00b0ff","black","#fe5900")) %>% 
+  mutate(Team = fct_reorder(Team,.$`Avg dragons`),color_code=fct_reorder(color_code,.$`Avg dragons`))
+
+teams_df %>% 
+  ggplot(aes(x=Team,y=.$`Avg dragons`,fill=Team))+
+  geom_bar(stat = "identity",width = .4)+
+  scale_fill_manual(values = as.character(teams_df$color_code[order(teams_df$`Avg dragons`)]))+
+  coord_flip() +
+  labs(x="",y="",title = "Avarage dragons while winning")+
+  theme_bw()+
+  theme(legend.position = "none")
+```
+
+# Źródła
+
+1.  Dane pobrane ze strony Games of Legends - <https://gol.gg/esports/home/>
+
+2.  Dodatkowe informacje i grafiki - <https://lol.fandom.com/wiki/League_of_Legends_Esports_Wiki>
